@@ -191,7 +191,7 @@ app.post('/api/withdraw', authUser, (req, res) => {
   const info = db.prepare(
     'INSERT INTO withdraw_requests (user_id, amount, method, mobile) VALUES (?, ?, ?, ?)'
   ).run(req.userId, amt, method, mobile);
-  db.prepare('INSERT INTO transactions (user_id, type, amount, description) VALUES (?, ?, ?, ?)'
+  db.prepare('INSERT INTO transactions (user_id, type, amount, description) VALUES (?, ?, ?, ?)')
     .run(req.userId, 'withdraw', amt, `Withdraw via ${method}`);
 
   res.json({
