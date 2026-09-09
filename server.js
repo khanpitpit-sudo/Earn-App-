@@ -2,8 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const Database = require('better-sqlite3');
 const path = require('path');
+const db = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,10 +11,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'earn_app_super_secret_key_change_m
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 
-// ============ DATABASE ============
-const db = new Database(path.join(__dirname, 'earnapp.db'));
-db.pragma('journal_mode = WAL');
-
+// ============ DATABASE (sql.js - pure JS/WASM, no native build) ============
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -245,7 +242,7 @@ app.post('/api/admin/withdraws/:id/approve', authAdmin, (req, res) => {
   const reqRow = db.prepare('SELECT * FROM withdraw_requests WHERE id = ?').get(req.params.id);
   if (!reqRow) return res.status(404).json({ error: 'Request not found' });
   if (reqRow.status !== 'pending') return res.status(400).json({ error: 'Already processed' });
-  db.prepare('UPDATE withdraw_requests SET status = ?, processed_at = datetime(\'now\') WHERE id = ?')
+  db.prepare("UPDATE withdraw_requests SET status = ?, processed_at = datetime('now') WHERE id = ?")
     .run('approved', req.params.id);
   res.json({ success: true, status: 'approved' });
 });
@@ -255,7 +252,7 @@ app.post('/api/admin/withdraws/:id/reject', authAdmin, (req, res) => {
   const reqRow = db.prepare('SELECT * FROM withdraw_requests WHERE id = ?').get(req.params.id);
   if (!reqRow) return res.status(404).json({ error: 'Request not found' });
   if (reqRow.status !== 'pending') return res.status(400).json({ error: 'Already processed' });
-  db.prepare('UPDATE withdraw_requests SET status = ?, processed_at = datetime(\'now\') WHERE id = ?')
+  db.prepare("UPDATE withdraw_requests SET status = ?, processed_at = datetime('now') WHERE id = ?")
     .run('rejected', req.params.id);
   // Refund balance
   db.prepare('UPDATE users SET balance = balance + ? WHERE id = ?').run(reqRow.amount, reqRow.user_id);
@@ -270,15 +267,20 @@ app.get('/api/admin/users', authAdmin, (req, res) => {
 
 // Admin: stats
 app.get('/api/admin/stats', authAdmin, (req, res) => {
-  const users = db.prepare('SELECT COUNT(*) c FROM users').get().c;
-  const pending = db.prepare('SELECT COUNT(*) c FROM withdraw_requests WHERE status = \'pending\'').get().c;
-  const approved = db.prepare('SELECT COUNT(*) c FROM withdraw_requests WHERE status = \'approved\'').get().c;
-  const totalPaid = db.prepare('SELECT COALESCE(SUM(amount),0) s FROM withdraw_requests WHERE status = \'approved\'').get().s;
+  const users = db.prepare("SELECT COUNT(*) c FROM users").get().c;
+  const pending = db.prepare("SELECT COUNT(*) c FROM withdraw_requests WHERE status = 'pending'").get().c;
+  const approved = db.prepare("SELECT COUNT(*) c FROM withdraw_requests WHERE status = 'approved'").get().c;
+  const totalPaid = db.prepare("SELECT COALESCE(SUM(amount),0) s FROM withdraw_requests WHERE status = 'approved'").get().s;
   res.json({ users, pending, approved, totalPaid });
 });
 
-app.listen(PORT, () => {
-  console.log(`Earn App backend running on http://localhost:${PORT}`);
-  console.log(`Admin panel: http://localhost:${PORT}/admin`);
-  console.log(`Admin login: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}`);
+db.ready.then(() => {
+  app.listen(PORT, () => {
+    console.log(`Earn App backend running on http://localhost:${PORT}`);
+    console.log(`Admin panel: http://localhost:${PORT}/admin`);
+    console.log(`Admin login: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}`);
+  });
+}).catch((err) => {
+  console.error('Failed to initialize database:', err);
+  process.exit(1);
 });
