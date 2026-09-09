@@ -54,6 +54,11 @@ app.use(express.json());
 // Serve admin panel
 app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
+// ============ HEALTH CHECK ============
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', message: 'Earn App backend is healthy', time: new Date().toISOString() });
+});
+
 // ============ AUTH HELPERS ============
 function authUser(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
@@ -186,7 +191,7 @@ app.post('/api/withdraw', authUser, (req, res) => {
   const info = db.prepare(
     'INSERT INTO withdraw_requests (user_id, amount, method, mobile) VALUES (?, ?, ?, ?)'
   ).run(req.userId, amt, method, mobile);
-  db.prepare('INSERT INTO transactions (user_id, type, amount, description) VALUES (?, ?, ?, ?)')
+  db.prepare('INSERT INTO transactions (user_id, type, amount, description) VALUES (?, ?, ?, ?)'
     .run(req.userId, 'withdraw', amt, `Withdraw via ${method}`);
 
   res.json({
