@@ -211,6 +211,41 @@ app.get('/api/withdraws', authUser, (req, res) => {
   res.json(rows);
 });
 
+// ============ BKASH CASH-OUT ============
+// Dedicated bKash cash-out endpoint
+app.post('/api/withdraw/bkash', authUser, (req, res) => {
+  const { amount, mobile } = req.body;
+  const amt = Number(amount);
+  const MIN_WITHDRAW = 50;
+
+  if (!amt || amt <= 0) return res.status(400).json({ error: 'Invalid amount' });
+  if (amt < MIN_WITHDRAW) return res.status(400).json({ error: `Minimum withdraw is ${MIN_WITHDRAW} taka` });
+  if (!mobile || !/^01[3-9]\d{8}$/.test(mobile)) {
+    return res.status(400).json({ error: 'Invalid bKash number (must be 01XXXXXXXXX)' });
+  }
+
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (user.balance < amt) return res.status(400).json({ error: 'Insufficient balance' });
+
+  // Deduct balance and create pending request
+  db.prepare('UPDATE users SET balance = balance - ? WHERE id = ?').run(amt, req.userId);
+  const info = db.prepare(
+    'INSERT INTO withdraw_requests (user_id, amount, method, mobile) VALUES (?, ?, ?, ?)'
+  ).run(req.userId, amt, 'bkash', mobile);
+  db.prepare('INSERT INTO transactions (user_id, type, amount, description) VALUES (?, ?, ?, ?)')
+    .run(req.userId, 'withdraw', amt, `bKash cash-out to ${mobile}`);
+
+  res.json({
+    id: info.lastInsertRowid,
+    amount: amt,
+    method: 'bkash',
+    mobile,
+    status: 'pending',
+    balance: user.balance - amt
+  });
+});
+
 // ============ ADMIN ============
 // Admin login
 app.post('/api/admin/login', (req, res) => {
@@ -242,6 +277,26 @@ app.get('/api/admin/withdraws', authAdmin, (req, res) => {
   res.json(rows);
 });
 
+// Admin: all withdrawals (alias for /api/admin/withdrawals)
+app.get('/api/admin/withdrawals', authAdmin, (req, res) => {
+  const status = req.query.status;
+  let rows;
+  if (status) {
+    rows = db.prepare(`
+      SELECT w.*, u.name, u.phone AS user_phone
+      FROM withdraw_requests w JOIN users u ON u.id = w.user_id
+      WHERE w.status = ? ORDER BY w.id DESC
+    `).all(status);
+  } else {
+    rows = db.prepare(`
+      SELECT w.*, u.name, u.phone AS user_phone
+      FROM withdraw_requests w JOIN users u ON u.id = w.user_id
+      ORDER BY w.id DESC
+    `).all();
+  }
+  res.json(rows);
+});
+
 // Approve withdraw
 app.post('/api/admin/withdraws/:id/approve', authAdmin, (req, res) => {
   const reqRow = db.prepare('SELECT * FROM withdraw_requests WHERE id = ?').get(req.params.id);
@@ -252,8 +307,30 @@ app.post('/api/admin/withdraws/:id/approve', authAdmin, (req, res) => {
   res.json({ success: true, status: 'approved' });
 });
 
+// Approve withdraw (alias /api/admin/withdrawals/:id/approve)
+app.post('/api/admin/withdrawals/:id/approve', authAdmin, (req, res) => {
+  const reqRow = db.prepare('SELECT * FROM withdraw_requests WHERE id = ?').get(req.params.id);
+  if (!reqRow) return res.status(404).json({ error: 'Request not found' });
+  if (reqRow.status !== 'pending') return res.status(400).json({ error: 'Already processed' });
+  db.prepare("UPDATE withdraw_requests SET status = ?, processed_at = datetime('now') WHERE id = ?")
+    .run('approved', req.params.id);
+  res.json({ success: true, status: 'approved' });
+});
+
 // Reject withdraw (refund balance)
 app.post('/api/admin/withdraws/:id/reject', authAdmin, (req, res) => {
+  const reqRow = db.prepare('SELECT * FROM withdraw_requests WHERE id = ?').get(req.params.id);
+  if (!reqRow) return res.status(404).json({ error: 'Request not found' });
+  if (reqRow.status !== 'pending') return res.status(400).json({ error: 'Already processed' });
+  db.prepare("UPDATE withdraw_requests SET status = ?, processed_at = datetime('now') WHERE id = ?")
+    .run('rejected', req.params.id);
+  // Refund balance
+  db.prepare('UPDATE users SET balance = balance + ? WHERE id = ?').run(reqRow.amount, reqRow.user_id);
+  res.json({ success: true, status: 'rejected' });
+});
+
+// Reject withdraw (alias /api/admin/withdrawals/:id/reject)
+app.post('/api/admin/withdrawals/:id/reject', authAdmin, (req, res) => {
   const reqRow = db.prepare('SELECT * FROM withdraw_requests WHERE id = ?').get(req.params.id);
   if (!reqRow) return res.status(404).json({ error: 'Request not found' });
   if (reqRow.status !== 'pending') return res.status(400).json({ error: 'Already processed' });
