@@ -33,6 +33,10 @@
 set -uo pipefail
 
 PROJ="${1:-.}"
+# Resolve this script's own directory to an ABSOLUTE path *before* any `cd`.
+# (A relative "$(dirname "$0")" breaks after `cd "$PROJ"` — the helper script
+#  then appears "not found next to this script" even though it is there.)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$PROJ/build-logs"
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/build-$(date +%Y%m%d-%H%M%S).log"
@@ -85,7 +89,7 @@ fi
 # --------------------------------------------------------- STEP 3: sanity check
 say ""
 say "[3/4] Resource sanity check"
-CHK="$(dirname "$0")/check-resources.sh"
+CHK="$SCRIPT_DIR/check-resources.sh"
 if [ -x "$CHK" ]; then
   if ! "$CHK" "$PROJ" 2>&1 | tee -a "$LOG" | tail -20; then
     say "  !! resource problems found — see above. Building anyway (report only)."
