@@ -51,8 +51,24 @@ db.exec(`
 app.use(cors());
 app.use(express.json());
 
-// Serve admin panel
+// Serve admin panel.
+// NOTE: express.static already redirects /admin -> /admin/ on its own
+// (and serves admin/index.html), so no manual redirect is needed here.
+// A manual app.get('/admin') would ALSO match '/admin/' (Express strict
+// routing is off by default) and cause an infinite redirect loop.
 app.use('/admin', express.static(path.join(__dirname, 'admin')));
+
+// Root info route (the app does not need it, but it stops confusing 404s
+// and lets anyone verify the backend is alive in a browser).
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'Earn App backend',
+    health: '/api/health',
+    admin: '/admin/',
+    time: new Date().toISOString()
+  });
+});
 
 // ============ HEALTH CHECK ============
 app.get('/api/health', (req, res) => {
@@ -357,9 +373,36 @@ app.get('/api/admin/stats', authAdmin, (req, res) => {
 });
 
 db.ready.then(() => {
+  // ============ DEMO ACCOUNT AUTO-SEED ============
+  // Render-এর free web service-এর ফাইলসিস্টেম ephemeral — প্রতি restart /
+  // spin-down-এ ডেটাবেস মুছে যায়। তাই সার্ভার চালু হওয়ার সময় পরীক্ষামূলক
+  // অ্যাকাউন্টটি না থাকলে নিজে থেকেই তৈরি করে নেওয়া হয়। এতে ব্যবহারকারী
+  // কখনোই "লগইন হচ্ছে না" অবস্থায় আটকে থাকবেন না।
+  const DEMO_PHONE = process.env.DEMO_PHONE || '01712345678';
+  const DEMO_PASSWORD = process.env.DEMO_PASSWORD || '123456';
+  const DEMO_NAME = process.env.DEMO_NAME || 'Test User';
+  const SEED_DEMO = (process.env.SEED_DEMO || 'true') !== 'false';
+
+  if (SEED_DEMO) {
+    try {
+      const existing = db.prepare('SELECT id FROM users WHERE phone = ?').get(DEMO_PHONE);
+      if (existing) {
+        console.log(`Demo account already present: ${DEMO_PHONE}`);
+      } else {
+        const hash = bcrypt.hashSync(DEMO_PASSWORD, 10);
+        db.prepare('INSERT INTO users (name, phone, password) VALUES (?, ?, ?)')
+          .run(DEMO_NAME, DEMO_PHONE, hash);
+        db.persist && db.persist();
+        console.log(`Demo account created: ${DEMO_PHONE} / ${DEMO_PASSWORD}`);
+      }
+    } catch (e) {
+      console.error('Demo account seeding failed:', e);
+    }
+  }
+
   app.listen(PORT, () => {
     console.log(`Earn App backend running on http://localhost:${PORT}`);
-    console.log(`Admin panel: http://localhost:${PORT}/admin`);
+    console.log(`Admin panel: http://localhost:${PORT}/admin/`);
     console.log(`Admin login: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD}`);
   });
 }).catch((err) => {
